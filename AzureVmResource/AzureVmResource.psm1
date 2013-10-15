@@ -35,8 +35,12 @@ function Get-TargetResource
         [parameter(Mandatory = $true)]
         [string] $storageAccountName,
 
-        [array]  $dataDisks,
-        [bool] $waitForBoot
+        [string] $affinityGroup,
+        [string] $networkName,
+        [string[]] $subnets,
+        [string[]] $dataDisks,
+        [bool] $waitForBoot,
+        [bool] $enableWinRMHttp
     )
 
     try
@@ -62,9 +66,9 @@ function Get-TargetResource
                     }
 
             # VM States: running, readyvmrole, stoppedvm
-            if ($vm.Status -ieq "running") { $res += @{ Ensure = "running" } }
-            elseif ($vm.Status -ieq "readyvmrole") { $res += @{ Ensure = "stopped" } }
-            else { $res += @{ Ensure = "present" } }
+            if ($vm.Status -ieq "readyrole") { Write-Verbose "VM Running"; $res += @{ Ensure = "running" } }
+            elseif ($vm.Status -ieq "StoppedDeallocated") { Write-Verbose "VM Stopped"; $res += @{ Ensure = "stopped" } }
+            else { Write-Verbose "VM State: $($vm.Status)"; $res += @{ Ensure = "present" } }
         }
         else
         {
@@ -106,8 +110,13 @@ function Test-TargetResource
         [parameter(Mandatory = $true)]
         [string] $storageAccountName,
 
-        [array]  $dataDisks,
-        [bool] $waitForBoot
+        [string] $affinityGroup,
+        [string] $networkName,
+        [string[]] $subnets,
+
+        [array] $dataDisks,
+        [bool] $waitForBoot,
+        [bool] $enableWinRMHttp
     )
 
     $currentState = Get-TargetResource @PSBoundParameters
@@ -131,16 +140,16 @@ function Test-TargetResource
     }
 
     # VM is not when running when it should
-    if ($ensure -ieq "running" -and $currentState.State -ine "ReadyVmRole")
+    if ($ensure -ieq "running" -and $currentState.Ensure -ine "running")
     {
-        Write-Verbose "VM is not running"
+        Write-Verbose ("VM is not running - current state: {0}" -f $currentState.Ensure)
         return $false
     }
 
     # VM is not stopped when it should
-    if ($ensure -ieq "stopped" -and $currentState.State -ine "StoppedVm")
+    if ($ensure -ieq "stopped" -and $currentState.Ensure -ine "stopped")
     {
-        Write-Verbose "VM is not stopped"
+        Write-Verbose ("VM is not stopped - current state: {0}" -f $currentState.Ensure)
         return $false
     }
 
@@ -183,8 +192,13 @@ function Set-TargetResource
         [parameter(Mandatory = $true)]
         [string] $storageAccountName,
 
-        [array]  $dataDisks,
-        [bool] $waitForBoot
+        [string] $affinityGroup,
+        [string] $networkName,
+        [string[]] $subnets,
+
+        [array] $dataDisks,
+        [bool] $waitForBoot,
+        [bool] $enableWinRMHttp
     )
 
     $currentState = Get-TargetResource @PSBoundParameters
@@ -198,10 +212,12 @@ function Set-TargetResource
     if ($currentState.ensure -ieq "absent" -and $ensure -ine "absent")
     {
         Write-Verbose "Configuring new Azure VM"
-        $vmConfig = New-AzureVMConfig -Name $name -InstanceSize $instanceSize -Image $image
-        $vmConfig | Add-AzureProvisioningConfig -Windows -AdminUserName $adminUsername -Password $adminPassword
+        $vmConfig = New-AzureVMConfig -Name $name -InstanceSize $instanceSize -Image $image | `
+            Add-AzureProvisioningConfig -Windows -AdminUserName $adminUsername -Password $adminPassword -EnableWinRMHttp:$enableWinRMHttp | `
+            Set-AzureSubnet $subnets
+
         Write-Verbose "Provisioning new Azure VM"
-        $opResult = $vmConfig | New-AzureVM -ServiceName $serviceName -Location $location -WaitForBoot:$waitForBoot
+        $opResult = $vmConfig | New-AzureVM -ServiceName $serviceName -Location $location -VNetName $networkName -AffinityGroup $affinityGroup -WaitForBoot:$waitForBoot
     }
 
     if ($currentState.ensure -ieq "stopped" -and $ensure -ieq "running")
@@ -215,11 +231,11 @@ function Set-TargetResource
         # If we've just create a new VM then wait for it to boot
         if ($currentState.ensure -ieq "absent" -and $ensure -ine "absent")
         {
-            Write-Verbose "Waiting for new VM to become available (so it can be stopped)"
-            while( (Get-AzureVm -ServiceName $serviceName -Name $name).Status -ieq "provisioning" )
-            {
-                sleep -Seconds 10
-            }
+            Write-Verbose "TODO: Waiting for new VM to become available (so it can be stopped)"
+            #while( (Get-AzureVm -ServiceName $serviceName -Name $name).Status -ieq "provisioning" )
+            #{
+            #    sleep -Seconds 10
+            #}
         }
 
         Write-Verbose "Stopping Azure VM"
