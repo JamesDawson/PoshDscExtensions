@@ -1,14 +1,21 @@
 ﻿param
 (
+    [switch] $updateResources,
+    [switch] $updatePsProviders
 )
 
-$pullServerUnc = "C:\ProgramData\PSDSCPullServer\Modules"
+$pullServerRoot = "C:\ProgramData\PSDSCPullServer"
 
-$resources = @(
+$resources = @()
+if ($updateResources)
+{
+    $resources = @(
                 "$pwd\AzurePublishingProfileResource",
                 "$pwd\AzureVmResource",
-                "$pwd\TimezoneResource"
+                "$pwd\TimezoneResource",
+                "$pwd\ChocolateyResource"
             )
+}
 
 Write-Host "Publishing DSC Resource Providers"
-& "$pwd\..\publish.ps1" -resources $resources -pullServerUnc $pullServerUnc -updatePsProviders
+& "$pwd\..\publish.ps1" -resources $resources -pullServerRoot $pullServerRoot -updatePsProviders:$updatePsProviders
