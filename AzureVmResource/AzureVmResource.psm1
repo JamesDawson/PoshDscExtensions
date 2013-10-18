@@ -62,13 +62,13 @@ function Get-TargetResource
                         Name = $vm.Name;
                         ServiceName = $vm.ServiceName;
                         Location = $svc.Location;
-                        Status = $vm.Status;
+                        Status = $vm.InstanceStatus;
                     }
 
             # VM States: running, readyvmrole, stoppedvm
-            if ($vm.Status -ieq "readyrole") { Write-Verbose "VM Running"; $res += @{ Ensure = "running" } }
-            elseif ($vm.Status -ieq "StoppedDeallocated") { Write-Verbose "VM Stopped"; $res += @{ Ensure = "stopped" } }
-            else { Write-Verbose "VM State: $($vm.Status)"; $res += @{ Ensure = "present" } }
+            if ($vm.InstanceStatus -ieq "readyrole") { Write-Verbose "VM Running"; $res += @{ Ensure = "running" } }
+            elseif ($vm.InstanceStatus -ieq "StoppedDeallocated") { Write-Verbose "VM Stopped"; $res += @{ Ensure = "stopped" } }
+            else { Write-Verbose "VM State: '$($vm.InstanceStatus)'"; $res += @{ Ensure = "present" } }
         }
         else
         {
