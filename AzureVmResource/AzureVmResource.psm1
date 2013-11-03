@@ -22,8 +22,6 @@ function Get-TargetResource
         [parameter(Mandatory = $true)]
         [string] $instanceSize,
         [parameter(Mandatory = $true)]
-        [string] $location,
-        [parameter(Mandatory = $true)]
         [string] $adminUsername,
         [parameter(Mandatory = $true)]
         [string] $adminPassword,
@@ -35,10 +33,18 @@ function Get-TargetResource
         [parameter(Mandatory = $true)]
         [string] $storageAccountName,
 
-        [string] $affinityGroup,
+        [Parameter(ParameterSetName="ByLocation", Mandatory = $true)]
+        [AllowEmptyString()]
+        $location = "",
+
+        [Parameter(ParameterSetName="ByAffinityGroup", Mandatory = $true)]
+        [AllowEmptyString()]
+        $affinityGroup = "",
+
         [string] $networkName,
         [string[]] $subnets,
-        [string[]] $dataDisks,
+
+        [array] $dataDisks,
         [bool] $waitForBoot,
         [bool] $enableWinRMHttp
     )
@@ -97,8 +103,6 @@ function Test-TargetResource
         [parameter(Mandatory = $true)]
         [string] $instanceSize,
         [parameter(Mandatory = $true)]
-        [string] $location,
-        [parameter(Mandatory = $true)]
         [string] $adminUsername,
         [parameter(Mandatory = $true)]
         [string] $adminPassword,
@@ -110,7 +114,14 @@ function Test-TargetResource
         [parameter(Mandatory = $true)]
         [string] $storageAccountName,
 
-        [string] $affinityGroup,
+        [Parameter(ParameterSetName="ByLocation", Mandatory = $true)]
+        [AllowEmptyString()]
+        $location = "",
+
+        [Parameter(ParameterSetName="ByAffinityGroup", Mandatory = $true)]
+        [AllowEmptyString()]
+        $affinityGroup = "",
+
         [string] $networkName,
         [string[]] $subnets,
 
@@ -179,8 +190,6 @@ function Set-TargetResource
         [parameter(Mandatory = $true)]
         [string] $instanceSize,
         [parameter(Mandatory = $true)]
-        [string] $location,
-        [parameter(Mandatory = $true)]
         [string] $adminUsername,
         [parameter(Mandatory = $true)]
         [string] $adminPassword,
@@ -192,7 +201,14 @@ function Set-TargetResource
         [parameter(Mandatory = $true)]
         [string] $storageAccountName,
 
-        [string] $affinityGroup,
+        [Parameter(ParameterSetName="ByLocation", Mandatory = $true)]
+        [AllowEmptyString()]
+        $location = "",
+
+        [Parameter(ParameterSetName="ByAffinityGroup", Mandatory = $true)]
+        [AllowEmptyString()]
+        $affinityGroup = "",
+
         [string] $networkName,
         [string[]] $subnets,
 
@@ -243,4 +259,4 @@ function Set-TargetResource
     }
 }
 
-Import-Module 'C:\Program Files (x86)\Microsoft SDKs\Windows Azure\PowerShell\Azure' -Verbose:$false
+if ( !(Get-Module Azure) ) { Import-Module 'C:\Program Files (x86)\Microsoft SDKs\Windows Azure\PowerShell\Azure' -Verbose:$false }
