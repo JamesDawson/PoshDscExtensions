@@ -26,7 +26,8 @@
         Set-AzureSubscription -SubscriptionName $subscriptionName
 
         Write-Verbose ("Searching for Azure Virtual Network '{0}'" -f $name)
-        $net = Get-AzureVNetConfig -name $name -ea 0
+        $netXml = [xml]((Get-AzureVNetConfig -ea 0).XmlConfiguration)
+        $net = $netXml.NetworkConfiguration.VirtualNetworkConfiguration.VirtualNetworkSites.VirtualNetworkSite | ? { $_.name -ieq $name }
 
         if (!$net)
         {
@@ -36,11 +37,11 @@
         {
             $res += @{
                         Ensure = "present"
-                        Name = $net.XmlConfiguration.NetworkConfiguration.VirtualNetworkConfiguration.VirtualNetworkSites.VirtualNetworkSite.Name
-                        AffinityGroup = $net.XmlConfiguration.NetworkConfiguration.VirtualNetworkConfiguration.VirtualNetworkSites.VirtualNetworkSite.AffinityGroup
-                        AddressSpace = $net.XmlConfiguration.NetworkConfiguration.VirtualNetworkConfiguration.VirtualNetworkSites.VirtualNetworkSite.AddressSpace.AddressPrefix
+                        Name = $net.Name
+                        AffinityGroup = $net.AffinityGroup
+                        AddressSpace = $net.AddressSpace.AddressPrefix
                     }
-        }    
+        }   
     }
     catch
     {
@@ -149,16 +150,6 @@ function _generateVirtualNetworkConfiguration
       </DnsServers>-->
     </Dns>
     <VirtualNetworkSites>
-      <VirtualNetworkSite name="valnetneu001" AffinityGroup="valagneu001">
-        <AddressSpace>
-          <AddressPrefix>10.0.0.0/24</AddressPrefix>
-        </AddressSpace>
-        <Subnets>
-          <Subnet name="Subnet-1">
-            <AddressPrefix>10.0.0.0/24</AddressPrefix>
-          </Subnet>
-        </Subnets>
-      </VirtualNetworkSite>
       <VirtualNetworkSite name="{0}" AffinityGroup="{1}">
         <AddressSpace>
           <AddressPrefix>{2}</AddressPrefix>

@@ -22,7 +22,7 @@
         Set-AzureSubscription -SubscriptionName $subscriptionName
 
         Write-Verbose ("Searching for Azure Affinity Group '{0}'" -f $name)
-        $afGroup = Get-AzureAffinityGroup -name $name
+        $afGroup = Get-AzureAffinityGroup -name $name -ea 0
 
         if (!$afGroup)
         {
@@ -100,6 +100,16 @@ function Set-TargetResource
     {
         $PSBoundParameters.Remove('ensure')
         $PSBoundParameters.Remove('subscriptionName')
+
+        if ( !($PSBoundParameters.ContainsKey('label')) )
+        {
+            $PSBoundParameters += @{label = ""}
+        }
+        if ( [string]::IsNullOrEmpty($PSBoundParameters.label) )
+        {
+            $PSBoundParameters.label = $PSBoundParameters.name
+        }
+
         Write-Verbose "Creating Azure Affinity Group"
         New-AzureAffinityGroup @PSBoundParameters
     }

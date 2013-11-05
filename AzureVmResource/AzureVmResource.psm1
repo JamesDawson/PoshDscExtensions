@@ -33,14 +33,8 @@ function Get-TargetResource
         [parameter(Mandatory = $true)]
         [string] $storageAccountName,
 
-        [Parameter(ParameterSetName="ByLocation", Mandatory = $true)]
-        [AllowEmptyString()]
-        $location = "",
-
-        [Parameter(ParameterSetName="ByAffinityGroup", Mandatory = $true)]
-        [AllowEmptyString()]
-        $affinityGroup = "",
-
+        [string] $location = "",
+        [string] $affinityGroup = "",
         [string] $networkName,
         [string[]] $subnets,
 
@@ -114,14 +108,8 @@ function Test-TargetResource
         [parameter(Mandatory = $true)]
         [string] $storageAccountName,
 
-        [Parameter(ParameterSetName="ByLocation", Mandatory = $true)]
-        [AllowEmptyString()]
-        $location = "",
-
-        [Parameter(ParameterSetName="ByAffinityGroup", Mandatory = $true)]
-        [AllowEmptyString()]
-        $affinityGroup = "",
-
+        [string] $location = "",
+        [string] $affinityGroup = "",
         [string] $networkName,
         [string[]] $subnets,
 
@@ -201,14 +189,8 @@ function Set-TargetResource
         [parameter(Mandatory = $true)]
         [string] $storageAccountName,
 
-        [Parameter(ParameterSetName="ByLocation", Mandatory = $true)]
-        [AllowEmptyString()]
-        $location = "",
-
-        [Parameter(ParameterSetName="ByAffinityGroup", Mandatory = $true)]
-        [AllowEmptyString()]
-        $affinityGroup = "",
-
+        [string] $location = "",
+        [string] $affinityGroup = "",
         [string] $networkName,
         [string[]] $subnets,
 
