@@ -1,0 +1,14 @@
+#pragma namespace("\\\\.\\root\\microsoft\\windows\\DesiredStateConfiguration")
+
+[ClassVersion("1.0.0"), FriendlyName("CloneAzureVhd")] 
+class CloneAzureVhdResource : OMI_BaseResource
+{
+  [write,ValueMap{"Present", "Absent"},Values{"Present", "Absent"}] string Ensure;
+  [Key] string SubscriptionName;
+  [Key] string StorageAccountName;
+  [Key] string StorageAccountKey;
+  [Key] string SourceVhdBlobUri;
+  [Key] string DestContainer;
+  [Key] string DiskName;
+  [write,ValueMap{"", "windows", "linux"},Values{"", "windows", "linux"}] string Os;
+};

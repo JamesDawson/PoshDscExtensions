@@ -11,6 +11,7 @@
 
 function Get-TargetResource
 {
+    [CmdletBinding()]
     param
     (
         [ValidateSet("Present","Absent","Running","Stopped")]
@@ -22,16 +23,21 @@ function Get-TargetResource
         [parameter(Mandatory = $true)]
         [string] $instanceSize,
         [parameter(Mandatory = $true)]
-        [string] $adminUsername,
-        [parameter(Mandatory = $true)]
-        [string] $adminPassword,
-        [parameter(Mandatory = $true)]
-        [string] $image,
-
-        [parameter(Mandatory = $true)]
         [string] $subscriptionName,
         [parameter(Mandatory = $true)]
         [string] $storageAccountName,
+
+        [Parameter(ParameterSetName="FromImage", Mandatory=$true)]
+        $adminUsername,
+        [Parameter(ParameterSetName="FromImage", Mandatory=$true)]
+        $adminPassword,
+        [Parameter(ParameterSetName="FromImage", Mandatory=$true)]
+        $baseImage,
+        [Parameter(ParameterSetName="FromImage")]
+        $enableWinRMHttp = $false,
+        
+        [Parameter(ParameterSetName="FromVhd", Mandatory=$true)]
+        [string] $osDiskName,
 
         [string] $location = "",
         [string] $affinityGroup = "",
@@ -39,8 +45,7 @@ function Get-TargetResource
         [string[]] $subnets,
 
         [array] $dataDisks,
-        [bool] $waitForBoot,
-        [bool] $enableWinRMHttp
+        [bool] $waitForBoot
     )
 
     try
@@ -86,6 +91,7 @@ function Get-TargetResource
 
 function Test-TargetResource
 {
+    [CmdletBinding()]
     param
     (
         [ValidateSet("Present","Absent","Running","Stopped")]
@@ -97,16 +103,21 @@ function Test-TargetResource
         [parameter(Mandatory = $true)]
         [string] $instanceSize,
         [parameter(Mandatory = $true)]
-        [string] $adminUsername,
-        [parameter(Mandatory = $true)]
-        [string] $adminPassword,
-        [parameter(Mandatory = $true)]
-        [string] $image,
-
-        [parameter(Mandatory = $true)]
         [string] $subscriptionName,
         [parameter(Mandatory = $true)]
         [string] $storageAccountName,
+
+        [Parameter(ParameterSetName="FromImage", Mandatory=$true)]
+        $adminUsername,
+        [Parameter(ParameterSetName="FromImage", Mandatory=$true)]
+        $adminPassword,
+        [Parameter(ParameterSetName="FromImage", Mandatory=$true)]
+        $baseImage,
+        [Parameter(ParameterSetName="FromImage")]
+        $enableWinRMHttp = $false,
+        
+        [Parameter(ParameterSetName="FromVhd", Mandatory=$true)]
+        [string] $osDiskName,
 
         [string] $location = "",
         [string] $affinityGroup = "",
@@ -114,8 +125,7 @@ function Test-TargetResource
         [string[]] $subnets,
 
         [array] $dataDisks,
-        [bool] $waitForBoot,
-        [bool] $enableWinRMHttp
+        [bool] $waitForBoot
     )
 
     $currentState = Get-TargetResource @PSBoundParameters
@@ -167,6 +177,7 @@ function Test-TargetResource
 
 function Set-TargetResource
 {
+    [CmdletBinding()]
     param
     (
         [ValidateSet("Present","Absent","Running","Stopped")]
@@ -178,16 +189,21 @@ function Set-TargetResource
         [parameter(Mandatory = $true)]
         [string] $instanceSize,
         [parameter(Mandatory = $true)]
-        [string] $adminUsername,
-        [parameter(Mandatory = $true)]
-        [string] $adminPassword,
-        [parameter(Mandatory = $true)]
-        [string] $image,
-
-        [parameter(Mandatory = $true)]
         [string] $subscriptionName,
         [parameter(Mandatory = $true)]
         [string] $storageAccountName,
+
+        [Parameter(ParameterSetName="FromImage", Mandatory=$true)]
+        $adminUsername,
+        [Parameter(ParameterSetName="FromImage", Mandatory=$true)]
+        $adminPassword,
+        [Parameter(ParameterSetName="FromImage", Mandatory=$true)]
+        $baseImage,
+        [Parameter(ParameterSetName="FromImage")]
+        $enableWinRMHttp = $false,
+        
+        [Parameter(ParameterSetName="FromVhd", Mandatory=$true)]
+        [string] $osDiskName,
 
         [string] $location = "",
         [string] $affinityGroup = "",
@@ -195,8 +211,7 @@ function Set-TargetResource
         [string[]] $subnets,
 
         [array] $dataDisks,
-        [bool] $waitForBoot,
-        [bool] $enableWinRMHttp
+        [bool] $waitForBoot
     )
 
     $currentState = Get-TargetResource @PSBoundParameters
@@ -210,12 +225,34 @@ function Set-TargetResource
     if ($currentState.ensure -ieq "absent" -and $ensure -ine "absent")
     {
         Write-Verbose "Configuring new Azure VM"
-        $vmConfig = New-AzureVMConfig -Name $name -InstanceSize $instanceSize -Image $image | `
-            Add-AzureProvisioningConfig -Windows -AdminUserName $adminUsername -Password $adminPassword -EnableWinRMHttp:$enableWinRMHttp | `
-            Set-AzureSubnet $subnets
+
+        # Configure the VM based on whether we're using an Image or VHD
+        if ($PSCmdlet.ParameterSetName -ieq "FromVhd") {
+            $vmConfig = New-AzureVMConfig -Name $name -DiskName $osDiskName -InstanceSize $instanceSize | `
+                            Set-AzureSubnet $subnets
+        }
+        else {
+            $vmConfig = New-AzureVMConfig -Name $name -InstanceSize $instanceSize -Image $image | `
+                            Add-AzureProvisioningConfig -Windows -AdminUserName $adminUsername -Password $adminPassword -EnableWinRMHttp:$enableWinRMHttp | `
+                            Set-AzureSubnet $subnets
+        }
 
         Write-Verbose "Provisioning new Azure VM"
-        $opResult = $vmConfig | New-AzureVM -ServiceName $serviceName -Location $location -VNetName $networkName -AffinityGroup $affinityGroup -WaitForBoot:$waitForBoot
+
+        # Recent versions of the Azure Powershell tools make the 'Location' and 'AffinityGroup'
+        # parameters mutually exclusive, so we need to code around this
+        if ($affinityGroup) {
+            $opResult = $vmConfig | New-AzureVM -ServiceName $serviceName -VNetName $networkName -AffinityGroup $affinityGroup -WaitForBoot:$waitForBoot
+            
+            # For VMs from VHD we need to enable RDP access
+            Get-AzureVm -Name $name -ServiceName $serviceName | Add-AzureEndpoint -Name 'Remote Desktop' -Protocol TCP -LocalPort 3389 -PublicPort 50111 | Update-AzureVM
+        }
+        elseif ($location) {
+            $opResult = $vmConfig | New-AzureVM -ServiceName $serviceName -Location $location -WaitForBoot:$waitForBoot
+        }
+        else {
+            throw "You must specify an Affinity Group or Location for the new Azure VM"
+        }
     }
 
     if ($currentState.ensure -ieq "stopped" -and $ensure -ieq "running")
@@ -241,4 +278,6 @@ function Set-TargetResource
     }
 }
 
+# Sometimes the installation path of the Azure module does not get added to the
+# PSModulePath environment variable
 if ( !(Get-Module Azure) ) { Import-Module 'C:\Program Files (x86)\Microsoft SDKs\Windows Azure\PowerShell\Azure' -Verbose:$false }
