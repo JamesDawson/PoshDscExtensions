@@ -45,7 +45,8 @@ function Get-TargetResource
         [string[]] $subnets,
 
         [array] $dataDisks,
-        [bool] $waitForBoot
+        [bool] $waitForBoot,
+        [bool] $deleteDisksOnRemove
     )
 
     try
@@ -55,17 +56,17 @@ function Get-TargetResource
         _initialiseAzurePublisherSettings $subscriptionName $storageAccountName
 
         Write-Verbose "Get-AzureVm"
-        $vm = Get-AzureVM -ServiceName $serviceName -Name $name
+        $vm = Get-AzureVM -ServiceName $serviceName -Name $name -ea 0
         Write-Verbose "Get-AzureService"
         $svc = Get-AzureService -ServiceName $serviceName -ea 0
         Write-Verbose "Get-AzureDeployment"
         $dep = Get-AzureDeployment -ServiceName $serviceName -ea 0
 
-        if ($vm)
+        if ($vm -or $svc)
         {
             $res += @{
                         Name = $vm.Name;
-                        ServiceName = $vm.ServiceName;
+                        ServiceName = $svc.ServiceName;
                         Location = $svc.Location;
                         Status = $vm.InstanceStatus;
                     }
@@ -73,7 +74,15 @@ function Get-TargetResource
             # VM States: running, readyvmrole, stoppedvm
             if ($vm.InstanceStatus -ieq "readyrole") { Write-Verbose "VM Running"; $res += @{ Ensure = "running" } }
             elseif ($vm.InstanceStatus -ieq "StoppedDeallocated") { Write-Verbose "VM Stopped"; $res += @{ Ensure = "stopped" } }
-            else { Write-Verbose "VM State: '$($vm.InstanceStatus)'"; $res += @{ Ensure = "present" } }
+            elseif (!$vm) { Write-Verbose "Service created, but no VM"; $res += @{ Ensure = "absent" } }
+            else { Write-Verbose "VM State: '$($vm.InstanceStatus)'"; Write-Verbose "CloudService State: '$($svc.Status)'"; $res += @{ Ensure = "present" } }
+
+            if ($vm)
+            {
+                $res += @{
+                            OsDiskName = $vm.VM.OSVirtualHardDisk.DiskName
+                        }
+            }
         }
         else
         {
@@ -125,13 +134,14 @@ function Test-TargetResource
         [string[]] $subnets,
 
         [array] $dataDisks,
-        [bool] $waitForBoot
+        [bool] $waitForBoot,
+        [bool] $deleteDisksOnRemove
     )
 
     $currentState = Get-TargetResource @PSBoundParameters
 
     # VM exists when it shouldn't
-    if ($ensure -ieq "absent" -and $currentState)
+    if ($ensure -ieq "absent" -and $currentState.ensure -ine "absent")
     {
         Write-Verbose "VM exists"
         return $false
@@ -211,7 +221,8 @@ function Set-TargetResource
         [string[]] $subnets,
 
         [array] $dataDisks,
-        [bool] $waitForBoot
+        [bool] $waitForBoot,
+        [bool] $deleteDisksOnRemove
     )
 
     $currentState = Get-TargetResource @PSBoundParameters
@@ -219,7 +230,17 @@ function Set-TargetResource
     if ($ensure -ieq "absent")
     {
         Write-Verbose "Removing Azure VM"
-        Remove-AzureVm -ServiceName $serviceName -Name $name -Force -Verbose:$VerbosePreference
+        Remove-AzureVm -ServiceName $serviceName -Name $name
+        Remove-AzureService -ServiceName $serviceName -Force
+
+        if ($deleteDisksOnRemove)
+        {
+            while ( (Get-AzureDisk -DiskName $currentState.OsDiskName).AttachedTo -ne $null ) {
+                Write-Verbose "Waiting for VM role to detach from disk before removing it..."
+                sleep -Seconds 10
+            }
+            Remove-AzureDisk -DiskName $currentState.OsDiskName -DeleteVHD
+        }
     }
 
     if ($currentState.ensure -ieq "absent" -and $ensure -ine "absent")
@@ -245,6 +266,7 @@ function Set-TargetResource
             $opResult = $vmConfig | New-AzureVM -ServiceName $serviceName -VNetName $networkName -AffinityGroup $affinityGroup -WaitForBoot:$waitForBoot
             
             # For VMs from VHD we need to enable RDP access
+            Write-Verbose "Enabling public RDP endpoint on port 50111 for $name"
             Get-AzureVm -Name $name -ServiceName $serviceName | Add-AzureEndpoint -Name 'Remote Desktop' -Protocol TCP -LocalPort 3389 -PublicPort 50111 | Update-AzureVM
         }
         elseif ($location) {
@@ -274,7 +296,7 @@ function Set-TargetResource
         }
 
         Write-Verbose "Stopping Azure VM"
-        Stop-AzureVm -ServiceName $serviceName -Name $name
+        Stop-AzureVm -ServiceName $serviceName -Name $name -Force
     }
 }
 

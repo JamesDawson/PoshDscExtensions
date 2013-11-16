@@ -110,11 +110,6 @@ function Set-TargetResource
             }
         }
     }
-    else {
-        if ($pscmdlet.ShouldProcess("Removing the Azure Disk object '$diskName'")) {
-            throw "NotImplemented"
-        }
-    }
 }
 
 
