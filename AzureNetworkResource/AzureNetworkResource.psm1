@@ -12,10 +12,10 @@
         [parameter(Mandatory = $true)]
         [string] $affinityGroup,
         [parameter(Mandatory = $true)]
-        [string] $addressSpace
+        [string] $addressSpace,
+        [parameter(Mandatory = $true)]
+        [string] $subnetName
 
-        #[parameter(Mandatory = $false)]
-        #[string] $subnetName,
         #[parameter(Mandatory = $false)]
         #[string] $subnetAddressPrefix
     )
@@ -65,10 +65,10 @@ function Test-TargetResource
         [parameter(Mandatory = $true)]
         [string] $affinityGroup,
         [parameter(Mandatory = $true)]
-        [string] $addressSpace
+        [string] $addressSpace,
+        [parameter(Mandatory = $true)]
+        [string] $subnetName
 
-        #[parameter(Mandatory = $false)]
-        #[string] $subnetName,
         #[parameter(Mandatory = $false)]
         #[string] $subnetAddressPrefix
     )
@@ -92,10 +92,10 @@ function Set-TargetResource
         [parameter(Mandatory = $true)]
         [string] $affinityGroup,
         [parameter(Mandatory = $true)]
-        [string] $addressSpace
+        [string] $addressSpace,
+        [parameter(Mandatory = $true)]
+        [string] $subnetName
 
-        #[parameter(Mandatory = $false)]
-        #[string] $subnetName,
         #[parameter(Mandatory = $false)]
         #[string] $subnetAddressPrefix
     )
@@ -105,24 +105,26 @@ function Set-TargetResource
 
     if ($ensure -ieq "absent")
     {
-        Write-Verbose "Removing Azure Network - NOT IMPLEMENTED"
-        #Remove-AzureVNetConfig
+        Write-Verbose "Removing Azure Network"
+        $netXmlFile = _removeVirtualNetworkConfiguration $name
     }
     else
     {
         $PSBoundParameters.Remove('ensure')
         $PSBoundParameters.Remove('subscriptionName')
 
-        Write-Verbose "Generating network configuration"
-        $netXmlFile = _generateVirtualNetworkConfiguration @PSBoundParameters
-
-        Write-Verbose "Configuring Azure network"
-        Set-AzureVNetConfig -configurationPath $netXmlFile
-        rm $netXmlFile
+        Write-Verbose "Creating network configuration"
+        $netXmlFile = _addVirtualNetworkConfiguration @PSBoundParameters
     }
+
+    # Update the network config in Azure
+    Write-Verbose "Applying network configuration changes"
+    Set-AzureVNetConfig -configurationPath $netXmlFile
+    rm $netXmlFile
+
 }
 
-function _generateVirtualNetworkConfiguration
+function _addVirtualNetworkConfiguration
 {
     param
     (
@@ -131,44 +133,55 @@ function _generateVirtualNetworkConfiguration
         [parameter(Mandatory = $true)]
         [string] $affinityGroup,
         [parameter(Mandatory = $true)]
-        [string] $addressSpace
+        [string] $addressSpace,
+        [parameter(Mandatory = $true)]
+        [string] $subnetName
 
-        #[parameter(Mandatory = $false)]
-        #[string] $subnetName,
         #[parameter(Mandatory = $false)]
         #[string] $subnetAddressPrefix
     )
 
-    $netConfigXml = (@"
-<NetworkConfiguration xmlns:xsd="http://www.w3.org/2001/XMLSchema"
-                      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-                      xmlns="http://schemas.microsoft.com/ServiceHosting/2011/07/NetworkConfiguration">
-  <VirtualNetworkConfiguration>
-    <Dns>
-      <!--<DnsServers>
-        <DnsServer name="foo" IPAddress="" />
-      </DnsServers>-->
-    </Dns>
-    <VirtualNetworkSites>
-      <VirtualNetworkSite name="{0}" AffinityGroup="{1}">
-        <AddressSpace>
-          <AddressPrefix>{2}</AddressPrefix>
-        </AddressSpace>
-        <Subnets>
-          <Subnet name="Subnet-{0}-1">
-            <AddressPrefix>{2}</AddressPrefix>
-          </Subnet>
-        </Subnets>
-      </VirtualNetworkSite>
-    </VirtualNetworkSites>
-  </VirtualNetworkConfiguration>
-</NetworkConfiguration>
-"@ -f $name, $affinityGroup, $addressSpace)
+    # Retrieve the current network configuration
+    [xml]$currentNetConfig = (Get-AzureVNetConfig).XmlConfiguration
+
+    # Create a new VirtualNetworkSite element
+    $newNet = ($currentNetConfig.NetworkConfiguration.VirtualNetworkConfiguration.VirtualNetworkSites.VirtualNetworkSite | Select -Last 1).Clone()
+
+    # Configure the new network
+    $newNet.Name = $name
+    $newNet.AffinityGroup = $affinityGroup
+    $newNet.AddressSpace.AddressPrefix = $addressSpace
+    $newNet.Subnets.Subnet.Name = $subnetName
+    $newNet.Subnets.Subnet.AddressPrefix = $addressSpace
+
+    $currentNetConfig.NetworkConfiguration.VirtualNetworkConfiguration.VirtualNetworkSites.AppendChild($newNet) | Out-Null
 
     $file = [IO.Path]::GetTempFileName() -replace "\.tmp",".netcfg"
-    Set-Content -Path $file -Value $netConfigXml -Encoding UTF8
-
+    $currentNetConfig.Save($file)
     return $file
 }
+
+function _removeVirtualNetworkConfiguration
+{
+    param
+    (
+        [parameter(Mandatory = $true)]
+        [string] $name
+    )
+
+    # Retrieve the current network configuration
+    [xml]$currentNetConfig = (Get-AzureVNetConfig).XmlConfiguration
+
+    # Locate the network to remove
+    $netToRemove = $currentNetConfig.NetworkConfiguration.VirtualNetworkConfiguration.VirtualNetworkSites.VirtualNetworkSite | ? { $_.Name -ieq $name }
+
+    # Remove the network
+    $currentNetConfig.NetworkConfiguration.VirtualNetworkConfiguration.VirtualNetworkSites.RemoveChild($netToRemove) | Out-Null
+
+    $file = [IO.Path]::GetTempFileName() -replace "\.tmp",".netcfg"
+    $currentNetConfig.Save($file)
+    return $file
+}
+
 
 if ( !(Get-Module Azure) ) { Import-Module 'C:\Program Files (x86)\Microsoft SDKs\Windows Azure\PowerShell\Azure' -Verbose:$false }
