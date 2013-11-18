@@ -141,7 +141,7 @@ function _cloneVhd {
 
     _createContainer $destContext $destContainerName
 
-    $blob = Get-AzureStorageBlob -Blob ("{0}.vhd" -f $osDiskFilename) -Container $destContainerName -Context $destContext -ea 0
+    $blob = Get-AzureStorageBlob -Blob ("{0}.vhd" -f $diskName) -Container $destContainerName -Context $destContext -ea 0
     if ( !($blob) )
     {
         $blob = Start-AzureStorageBlobCopy -srcUri $sourceVhdBlobUri `
@@ -154,6 +154,10 @@ function _cloneVhd {
         {
             throw "There was an error cloning the VHD"
         }
+    }
+    else
+    {
+        Write-Verbose ("The cloned VHD already exists: {0}" -f $blob.Name)
     }
 
     return ("{0}{1}/{2}.vhd" -f $blob.Context.BlobEndPoint, $destContainerName, $diskName)
