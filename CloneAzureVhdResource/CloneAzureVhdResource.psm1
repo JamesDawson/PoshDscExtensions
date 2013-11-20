@@ -8,14 +8,20 @@ function Get-TargetResource
 
         [parameter(Mandatory = $true)]
         [string] $subscriptionName,
-        [parameter(Mandatory = $true)]
-        [string] $storageAccountName,
-        [parameter(Mandatory = $true)]
-        [string] $storageAccountKey,
+
+        [parameter(Mandatory = $false)]
+        [string] $sourceStorageAccountKey,
         [parameter(Mandatory = $true)]
         [string] $sourceVhdBlobUri,
+
         [parameter(Mandatory = $true)]
+        [string] $destStorageAccountName,
+        [parameter(Mandatory = $true)]
+        [string] $destStorageAccountKey,
+        [parameter(Mandatory = $true)]
+        [ValidatePattern("^[a-z0-9](([a-z0-9\-[^\-])){1,61}[a-z0-9]$")]
         [string] $destContainer,
+        
         [parameter(Mandatory = $true)]
         [string] $diskName,
 
@@ -23,8 +29,7 @@ function Get-TargetResource
         [string] $os
     )
 
-    Set-AzureSubscription -SubscriptionName $subscriptionName -CurrentStorageAccountName $storageAccountName
-    #Select-AzureSubscription $subscriptionName
+    Set-AzureSubscription -SubscriptionName $subscriptionName -CurrentStorageAccountName $destStorageAccountName
 
     $azureDisk = Get-AzureDisk -DiskName $diskName -ea 0
 
@@ -51,14 +56,20 @@ function Test-TargetResource
 
         [parameter(Mandatory = $true)]
         [string] $subscriptionName,
-        [parameter(Mandatory = $true)]
-        [string] $storageAccountName,
-        [parameter(Mandatory = $true)]
-        [string] $storageAccountKey,
+
+        [parameter(Mandatory = $false)]
+        [string] $sourceStorageAccountKey,
         [parameter(Mandatory = $true)]
         [string] $sourceVhdBlobUri,
+
         [parameter(Mandatory = $true)]
+        [string] $destStorageAccountName,
+        [parameter(Mandatory = $true)]
+        [string] $destStorageAccountKey,
+        [parameter(Mandatory = $true)]
+        [ValidatePattern("^[a-z0-9](([a-z0-9\-[^\-])){1,61}[a-z0-9]$")]
         [string] $destContainer,
+        
         [parameter(Mandatory = $true)]
         [string] $diskName,
 
@@ -81,49 +92,80 @@ function Set-TargetResource
 
         [parameter(Mandatory = $true)]
         [string] $subscriptionName,
-        [parameter(Mandatory = $true)]
-        [string] $storageAccountName,
-        [parameter(Mandatory = $true)]
-        [string] $storageAccountKey,
+
+        [parameter(Mandatory = $false)]
+        [string] $sourceStorageAccountKey,
         [parameter(Mandatory = $true)]
         [string] $sourceVhdBlobUri,
+
         [parameter(Mandatory = $true)]
+        [string] $destStorageAccountName,
+        [parameter(Mandatory = $true)]
+        [string] $destStorageAccountKey,
+        [parameter(Mandatory = $true)]
+        [ValidatePattern("^[a-z0-9](([a-z0-9\-[^\-])){1,61}[a-z0-9]$")]
         [string] $destContainer,
+        
         [parameter(Mandatory = $true)]
         [string] $diskName,
 
         [ValidateSet("","windows","linux")]
         [string] $os
     )
-
-    $destContext = New-AzureStorageContext -StorageAccountName $storageAccountName -StorageAccountKey $storageAccountKey
+    
+    if ($sourceStorageAccountKey) {
+        $sourceContext = _deriveSourceStorageContext $sourceVhdBlobUri $sourceStorageAccountKey
+    }
+    $destContext = New-AzureStorageContext -StorageAccountName $destStorageAccountName -StorageAccountKey $destStorageAccountKey
 
     if ($ensure -ieq "present") {
         if ($pscmdlet.ShouldProcess("Creating the Azure Disk object '$diskName'")) {
             
-            $clonedVhdUri = _cloneVhd $sourceVhdBlobUri $destContext $destContainer $diskName            
+            $clonedVhdUri = _cloneVhd $sourceVhdBlobUri $destContext $destContainer $diskName $sourceContext
 
             $azureDisk = Get-AzureDisk -DiskName $diskName -ea 0
             if ( !($azureDisk) )
             {
-                $osAzureDisk = Add-AzureDisk -DiskName $diskName -MediaLocation $clonedVhdUri -OS $os
+                Write-Verbose "Registering VHD as an Azure disk"
+                $azureDisk = Add-AzureDisk -DiskName $diskName -MediaLocation $clonedVhdUri -OS $os
             }
         }
     }
 }
 
+function _deriveSourceStorageContext {
+    param
+    (
+        [uri]$sourceBlobUri,
+        $storageAccountKey
+    )
+
+    $storageAccountName = ($sourceBlobUri.Host.Split("."))[0]
+
+    $context = New-AzureStorageContext -StorageAccountName $storageAccountName -StorageAccountKey $storageAccountKey
+
+    return $context
+}
 
 function _createContainer {
     param
     (
-        $destContext,
+        $storageContext,
         $containerName
     )
 
-    if ( !(Get-AzureStorageContainer -Name $containerName -Context $destContext -ea 0) )
+    Write-Verbose "Checking for the container: $containerName"
+    if ( !(Get-AzureStorageContainer -Name $containerName -Context $storageContext -ea 0) )
     {
         try {
-            New-AzureStorageContainer -Name $containerName -Context $destContext
+            Write-Verbose "Creating the container: $containerName"
+            New-AzureStorageContainer -Name $containerName -Permission Off -Context $storageContext
+
+            while( !(Get-AzureStorageContainer -Name $containerName -Context $storageContext -ea 0) )
+            {
+                Write-Verbose "Waiting for container to be created..."
+                sleep -Seconds 5
+            }
         } catch {
             throw ("There was a problem creating the container: '{0}'" -f $containerName)
         }
@@ -136,44 +178,38 @@ function _cloneVhd {
         $sourceVhdBlobUri,
         $destContext,
         $destContainerName,
-        $diskName
+        $diskName,
+        $sourceContext
     )
 
-    _createContainer $destContext $destContainerName
+    $newContainer = _createContainer $destContext $destContainerName
 
-    $blob = Get-AzureStorageBlob -Blob ("{0}.vhd" -f $diskName) -Container $destContainerName -Context $destContext -ea 0
+    $blob = Get-AzureStorageBlob -Blob ("{0}.vhd" -f $osDiskFilename) -Container $destContainerName -Context $destContext -ea 0
     if ( !($blob) )
     {
-        $blob = Start-AzureStorageBlobCopy -srcUri $sourceVhdBlobUri `
-                                             -DestContainer $destContainerName `
-                                             -DestBlob ("{0}.vhd" -f $diskName) `
-                                             -DestContext $destContext
-
-        $res = $blob | Get-AzureStorageBlobCopyState
-        if (!$res)
-        {
-            throw "There was an error cloning the VHD"
+        if ($sourceContext) {
+            $blob = Start-AzureStorageBlobCopy -srcUri $sourceVhdBlobUri `
+                                                 -srcContext $sourceContext `
+                                                 -DestContainer $destContainerName `
+                                                 -DestBlob ("{0}.vhd" -f $diskName) `
+                                                 -DestContext $destContext
         }
-    }
-    else
-    {
-        Write-Verbose ("The cloned VHD already exists: {0}" -f $blob.Name)
+        else {
+            $blob = Start-AzureStorageBlobCopy -srcUri $sourceVhdBlobUri `
+                                                 -DestContainer $destContainerName `
+                                                 -DestBlob ("{0}.vhd" -f $diskName) `
+                                                 -DestContext $destContext
+        }
+
+        # A cross-stamp blob copy will not be instantaneous, so we may need to wait
+        While( ($blob | Get-AzureStorageBlobCopyState).Status -eq "Pending" ) {
+            Write-Verbose "Waiting for VHD to be copied..."
+            Start-Sleep 10
+        }
     }
 
     return ("{0}{1}/{2}.vhd" -f $blob.Context.BlobEndPoint, $destContainerName, $diskName)
 }
-<#
-
-
-$vmConfig = New-AzureVMConfig -Name $name -DiskName $osAzureDisk.Label -InstanceSize $instanceSize | `
-            Set-AzureSubnet $subnets | `
-            New-AzureVM -ServiceName $serviceName -VNetName $networkName -AffinityGroup $affinityGroup -WaitForBoot:$waitForBoot
-
-#get-azurevm valvmalm001 | add-azureendpoint -Name 'Remote Desktop' -Protocol TCP -LocalPort 3389 -PublicPort 50111 | Update-AzureVM
-
-$ErrorActionPreference = "Continue"
-
-#>
 
 # Sometimes the installation path of the Azure module does not get added to the
 # PSModulePath environment variable

@@ -5,10 +5,11 @@ class CloneAzureVhdResource : OMI_BaseResource
 {
   [write,ValueMap{"Present", "Absent"},Values{"Present", "Absent"}] string Ensure;
   [Key] string SubscriptionName;
-  [Key] string StorageAccountName;
-  [Key] string StorageAccountKey;
   [Key] string SourceVhdBlobUri;
+  [Key] string DestStorageAccountName;
+  [Key] string DestStorageAccountKey;
   [Key] string DestContainer;
   [Key] string DiskName;
+  string SourceStorageAccountKey;
   [write,ValueMap{"", "windows", "linux"},Values{"", "windows", "linux"}] string Os;
 };
