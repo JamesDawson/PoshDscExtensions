@@ -1,5 +1,6 @@
 ﻿function Get-TargetResource
 {
+    [CmdletBinding()]
     param
     (
         [ValidateSet("present","absent")]
@@ -12,12 +13,9 @@
         [parameter(Mandatory = $true)]
         [string] $affinityGroup,
         [parameter(Mandatory = $true)]
-        [string] $addressSpace
-
-        #[parameter(Mandatory = $false)]
-        #[string] $subnetName,
-        #[parameter(Mandatory = $false)]
-        #[string] $subnetAddressPrefix
+        [string] $addressSpace,
+        [parameter(Mandatory = $true)]
+        [string] $subnetName
     )
 
     $res = @{}
@@ -31,7 +29,10 @@
 
         if (!$net)
         {
-            $res += @{ Ensure = "absent" }
+            $res += @{
+                        Ensure = "absent"
+                        NetConfigXml = $netXml
+                    }
         }
         else
         {
@@ -39,7 +40,8 @@
                         Ensure = "present"
                         Name = $net.Name
                         AffinityGroup = $net.AffinityGroup
-                        AddressSpace = $net.AddressSpace.AddressPrefix
+                        AddressSpace = $net.AddressSpace.AddressPrefix                        
+                        NetConfigXml = $netXml
                     }
         }   
     }
@@ -53,6 +55,7 @@
 
 function Test-TargetResource
 {
+    [CmdletBinding()]
     param
     (
         [ValidateSet("present","absent")]
@@ -65,21 +68,32 @@ function Test-TargetResource
         [parameter(Mandatory = $true)]
         [string] $affinityGroup,
         [parameter(Mandatory = $true)]
-        [string] $addressSpace
-
-        #[parameter(Mandatory = $false)]
-        #[string] $subnetName,
-        #[parameter(Mandatory = $false)]
-        #[string] $subnetAddressPrefix
+        [string] $addressSpace,
+        [parameter(Mandatory = $true)]
+        [string] $subnetName
     )
 
     $currentState = Get-TargetResource @PSBoundParameters
 
-    return ($currentState.ensure -ieq $ensure)
+    if ($currentState.ensure -ne $ensure) {
+        # needs installing or removing
+        Write-Verbose "Network: Current=$($currentState.ensure); Desired=$ensure"
+        return $false
+    }
+    elseif ($ensure -ieq "present") {
+        if ( ($currentState.AffinityGroup -ine $affinityGroup) -or `
+                ($currentState.AddressSpace -ine $addressSpace) ) {
+            return $false
+        }
+    }
+
+    Write-Verbose "Network: All Good!"
+    return $true
 }
 
 function Set-TargetResource
 {
+    [CmdletBinding()]
     param
     (
         [ValidateSet("present","absent")]
@@ -92,83 +106,79 @@ function Set-TargetResource
         [parameter(Mandatory = $true)]
         [string] $affinityGroup,
         [parameter(Mandatory = $true)]
-        [string] $addressSpace
-
-        #[parameter(Mandatory = $false)]
-        #[string] $subnetName,
-        #[parameter(Mandatory = $false)]
-        #[string] $subnetAddressPrefix
+        [string] $addressSpace,
+        [parameter(Mandatory = $true)]
+        [string] $subnetName
     )
 
-    #$currentState = Get-TargetResource @PSBoundParameters
-    Set-AzureSubscription -SubscriptionName $subscriptionName
+    $boundParams = $PSBoundParameters
+
+    $currentState = Get-TargetResource @boundParams
+
+    $netCfgNs = "http://schemas.microsoft.com/ServiceHosting/2011/07/NetworkConfiguration"
 
     if ($ensure -ieq "absent")
     {
-        Write-Verbose "Removing Azure Network - NOT IMPLEMENTED"
-        #Remove-AzureVNetConfig
+        Write-Verbose "Removing Azure Network"
+        $netToRemove = $currentState.NetConfigXml.NetworkConfiguration.VirtualNetworkConfiguration.VirtualNetworkSites.VirtualNetworkSite | ? { $_.name -ieq $name }
+        if ($netToRemove) {
+            $currentState.NetConfigXml.NetworkConfiguration.VirtualNetworkConfiguration.VirtualNetworkSites.RemoveChild($netToRemove) | Out-Null
+        }
     }
     else
     {
-        $PSBoundParameters.Remove('ensure')
-        $PSBoundParameters.Remove('subscriptionName')
+        if ($currentState.ensure -ieq "absent") {
+            Write-Verbose "Creating network configuration"
+            $newNetConfig = New-XmlElement -doc $currentState.NetConfigXml -name "VirtualNetworkSite" -attributes @{name=$name; AffinityGroup=$affinityGroup} -ns $netCfgNs
+            $currentState.NetConfigXml.NetworkConfiguration.VirtualNetworkConfiguration.VirtualNetworkSites.AppendChild($newNetConfig)
+        }
 
-        Write-Verbose "Generating network configuration"
-        $netXmlFile = _generateVirtualNetworkConfiguration @PSBoundParameters
+        # Apply core network configuration
+        Write-Verbose "Updating network configuration"
+        $netConfig = $currentState.NetConfigXml.NetworkConfiguration.VirtualNetworkConfiguration.VirtualNetworkSites.VirtualNetworkSite | ? { $_.name -ieq $name }
 
-        Write-Verbose "Configuring Azure network"
-        Set-AzureVNetConfig -configurationPath $netXmlFile
-        rm $netXmlFile
+        $netConfig.InnerXml = $templates.NewNetwork -f $addressSpace, $subnetName        
     }
+
+    # Update the network config in Azure
+    Write-Verbose "Applying network configuration changes"
+    $file = [IO.Path]::GetTempFileName() -replace "\.tmp",".netcfg"
+    $currentState.NetConfigXml.Save($file)
+
+    Set-AzureVNetConfig -configurationPath $file
+    rm $file
 }
 
-function _generateVirtualNetworkConfiguration
+function New-XmlElement
 {
     param
     (
-        [parameter(Mandatory = $true)]
+        [xml] $doc,
         [string] $name,
-        [parameter(Mandatory = $true)]
-        [string] $affinityGroup,
-        [parameter(Mandatory = $true)]
-        [string] $addressSpace
+        [string] $ns,
+        [string] $value,
+        [hashtable] $attributes = @{},
+        [xml.xmlelement[]] $children = @(),
 
-        #[parameter(Mandatory = $false)]
-        #[string] $subnetName,
-        #[parameter(Mandatory = $false)]
-        #[string] $subnetAddressPrefix
+        [Parameter(ValueFromPipeline=$true)]
+        [xml.xmlelement] $parent
     )
 
-    $netConfigXml = (@"
-<NetworkConfiguration xmlns:xsd="http://www.w3.org/2001/XMLSchema"
-                      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-                      xmlns="http://schemas.microsoft.com/ServiceHosting/2011/07/NetworkConfiguration">
-  <VirtualNetworkConfiguration>
-    <Dns>
-      <!--<DnsServers>
-        <DnsServer name="foo" IPAddress="" />
-      </DnsServers>-->
-    </Dns>
-    <VirtualNetworkSites>
-      <VirtualNetworkSite name="{0}" AffinityGroup="{1}">
-        <AddressSpace>
-          <AddressPrefix>{2}</AddressPrefix>
-        </AddressSpace>
-        <Subnets>
-          <Subnet name="Subnet-{0}-1">
-            <AddressPrefix>{2}</AddressPrefix>
-          </Subnet>
-        </Subnets>
-      </VirtualNetworkSite>
-    </VirtualNetworkSites>
-  </VirtualNetworkConfiguration>
-</NetworkConfiguration>
-"@ -f $name, $affinityGroup, $addressSpace)
+    $newNode = $doc.CreateElement($name, $ns)
+    $newNode.InnerText = $value
+    $attributes.Keys | % {
+        $newNode.SetAttribute($_, $attributes[$_])
+    }
 
-    $file = [IO.Path]::GetTempFileName() -replace "\.tmp",".netcfg"
-    Set-Content -Path $file -Value $netConfigXml -Encoding UTF8
+    $children | % { $newNode.AppendChild($_) }
 
-    return $file
+    return $newNode
+}
+
+$templates = DATA {
+    ConvertFrom-StringData -stringdata @'
+        NewNetwork = <AddressSpace><AddressPrefix>{0}</AddressPrefix></AddressSpace><Subnets><Subnet name="{1}"><AddressPrefix>{0}</AddressPrefix></Subnet></Subnets>
+'@
 }
 
 if ( !(Get-Module Azure) ) { Import-Module 'C:\Program Files (x86)\Microsoft SDKs\Windows Azure\PowerShell\Azure' -Verbose:$false }
