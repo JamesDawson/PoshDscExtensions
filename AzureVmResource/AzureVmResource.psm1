@@ -146,6 +146,11 @@ function Test-TargetResource
         Write-Verbose "VM exists"
         return $false
     }
+    elseif ($ensure -ieq "absent" -and $currentState.ServiceName)
+    {
+        Write-Verbose "Service exists"
+        return $false
+    }
     elseif ($ensure -ieq "absent")
     {
         return $true
@@ -228,12 +233,26 @@ function Set-TargetResource
     $currentState = Get-TargetResource @PSBoundParameters
 
     if ($ensure -ieq "absent")
-    {
-        Write-Verbose "Removing Azure VM"
-        Remove-AzureVm -ServiceName $serviceName -Name $name
-        Remove-AzureService -ServiceName $serviceName -Force
+    {        
+        if ($currentState.Name) {
+            Write-Verbose "Removing Azure VM"
+            Remove-AzureVm -ServiceName $serviceName -Name $name
+        }
 
-        if ($deleteDisksOnRemove)
+        if ($currentState.ServiceName) {
+            Write-Verbose "Removing Azure Cloud Service"
+            Remove-AzureService -ServiceName $serviceName -Force
+        }
+
+        ##
+        ## Once a VM is removed we can no longer match a VM to its disk, so if something goes wrong
+        ## (or is cancelled) between the above code and this then we still have orphaned disks even
+        ## if the DSC script is re-run.
+        ##
+        ## NOTE: Unless the DSC script specifies the disk name - should we avoid defining conventions
+        ##       inside DSC resources?
+        ##
+        if ($deleteDisksOnRemove -and $currentState.OsDiskName)
         {
             while ( (Get-AzureDisk -DiskName $currentState.OsDiskName).AttachedTo -ne $null ) {
                 Write-Verbose "Waiting for VM role to detach from disk before removing it..."
@@ -246,6 +265,10 @@ function Set-TargetResource
     if ($currentState.ensure -ieq "absent" -and $ensure -ine "absent")
     {
         Write-Verbose "Configuring new Azure VM"
+
+        ##
+        ## TODO: This part is not 100% idempotent, if a run is terminated it's possible that the VM is part configured
+        ##
 
         # Configure the VM based on whether we're using an Image or VHD
         if ($PSCmdlet.ParameterSetName -ieq "FromVhd") {
